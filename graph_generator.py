@@ -1,6 +1,6 @@
 import networkx as nx
 
-def random_graph_generator(nodecount=20, edgechance=0.2):
+def random_graph_generator(nodecount, edgechance):
     Graph = nx.erdos_renyi_graph(nodecount,edgechance)
     return Graph
 
