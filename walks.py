@@ -1,6 +1,6 @@
 import networkx as nx
 import random
-
+from classes import Pattern
 def random_walk(Graph, walk_length=5):
     start = random.choice(list(Graph.nodes()))
     visited_nodes = []
