@@ -1,4 +1,3 @@
-from NGPM import graph_generator
 import torch
 import torch.nn as nn
 class Pattern():
@@ -37,8 +36,8 @@ class PatternEncoder(nn.Module):
         return embedded_anonymouswalk
 
     def forward(self, pattern):
-        embedded_semanticwalk = self.semanticwalk_encode(pattern.semantic_walk)
-        embedded_anonymouswalk = self.anonymouswalk_encode(pattern.anonymous_walk)
+        embedded_semanticwalk = self.semanticwalk_encode(pattern["semantic_walk"])
+        embedded_anonymouswalk = self.anonymouswalk_encode(pattern["anonymous_walk"])
 
         encoded_semanticwalk = self.semantic_transformer(embedded_semanticwalk.unsqueeze(0))
         encoded_semanticwalk = encoded_semanticwalk.mean(dim=1)
@@ -49,5 +48,48 @@ class PatternEncoder(nn.Module):
 
         pattern = self.encoded_semanticwalk + self.lambda_weight*self.encoded_anonymouswalk
         return pattern
+
+class PatternAggregator(nn.Module):
+    def __init__(self, embedding_dim, num_heads=4, num_layers=2, dim_feedforward=2048, dropout=0.1):
+        super().__init__()
+        self.embedding_dim = embedding_dim
         
-    
+        # The Transformer Encoder layer to process the sequence of pattern embeddings.
+        # batch_first=True makes it expect input of shape (batch, seq, feature)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.embedding_dim, 
+            nhead=num_heads, 
+            dim_feedforward=dim_feedforward, 
+            dropout=dropout, 
+            activation="relu", 
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+    def forward(self, pattern_embeddings):
+        # Input shape: (num_patterns, embedding_dim)
+        
+        # 1. Unsqueeze: Add a batch dimension.
+        # nn.TransformerEncoder with batch_first=True expects (batch_size, sequence_length, embedding_dim).
+        # We are processing a single graph's patterns, so batch_size=1 and sequence_length=num_patterns.
+        # Shape becomes: (1, num_patterns, embedding_dim)
+        x = pattern_embeddings.unsqueeze(0)
+        
+        # 2. Transformer: Apply self-attention across patterns.
+        # This allows each local pattern to attend to every other pattern in the graph, 
+        # learning their global structural relationships.
+        # Shape remains: (1, num_patterns, embedding_dim)
+        x = self.transformer(x)
+        
+        # 3. Pooling: Aggregate the enriched pattern embeddings into ONE graph embedding.
+        # We use mean pooling over the sequence dimension (dim=1) as per standard 
+        # set-aggregation strategies to form a fixed-size representation.
+        # Shape becomes: (1, embedding_dim)
+        graph_embedding = x.mean(dim=1)
+        
+        # 4. Squeeze: Remove the batch dimension.
+        # This returns the final 1D graph embedding tensor.
+        # Shape becomes: (embedding_dim,)
+        graph_embedding = graph_embedding.squeeze(0)
+        
+        return graph_embedding
