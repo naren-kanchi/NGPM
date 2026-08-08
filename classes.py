@@ -92,4 +92,75 @@ class PatternAggregator(nn.Module):
         # Shape becomes: (embedding_dim,)
         graph_embedding = graph_embedding.squeeze(0)
         
-        return graph_embedding
+        return graph_embedding
+
+class GraphClassifier(nn.Module):
+    def __init__(self, embedding_dim, num_classes):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.num_classes = num_classes
+        
+        # A lightweight MLP for downstream prediction.
+        # The representation power lies in the GPM encoders; the MLP just projects 
+        # the rich structural embedding into the classification space.
+        self.mlp = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2), # Dropout for regularization
+            nn.Linear(self.embedding_dim // 2, self.num_classes)
+        )
+
+    def forward(self, graph_embedding):
+        # Input shape expected from PatternAggregator: (embedding_dim,)
+        
+        # Linear layers expect a batch dimension. If the input is unbatched (1D),
+        # we add a temporary batch dimension.
+        is_unbatched = graph_embedding.dim() == 1
+        if is_unbatched:
+            # Shape becomes: (1, embedding_dim)
+            graph_embedding = graph_embedding.unsqueeze(0)
+            
+        # Pass through the MLP.
+        # Shape becomes: (batch_size, num_classes)
+        logits = self.mlp(graph_embedding)
+        
+        # If we artificially added a batch dimension, remove it before returning.
+        if is_unbatched:
+            # Shape becomes: (num_classes,)
+            logits = logits.squeeze(0)
+            
+        return logits
+
+class GPMModel(nn.Module):
+    def __init__(self, node_count, embedding_dim, num_classes, aggregator_heads=4, aggregator_layers=2):
+        super().__init__()
+        self.encoder = PatternEncoder(node_count, embedding_dim)
+        self.aggregator = PatternAggregator(embedding_dim, num_heads=aggregator_heads, num_layers=aggregator_layers)
+        self.classifier = GraphClassifier(embedding_dim, num_classes)
+
+    def forward(self, patterns):
+        """
+        Forward pass for a single graph.
+        
+        Args:
+            patterns: A list of pattern dictionaries (each with 'semantic_walk' and 'anonymous_walk').
+                      These represent the sampled walks for ONE graph.
+        
+        Returns:
+            logits: Prediction logits of shape (num_classes,)
+        """
+        # 1. Encode all patterns using the PatternEncoder.
+        encoded_patterns = []
+        for p in patterns:
+            encoded_patterns.append(self.encoder(p))
+            
+        # 2. Stack into a tensor of shape (num_patterns, embedding_dim)
+        pattern_tensor = torch.stack(encoded_patterns)
+        
+        # 3. Aggregate into a single graph embedding of shape (embedding_dim,)
+        graph_embedding = self.aggregator(pattern_tensor)
+        
+        # 4. Classify the graph embedding to get logits of shape (num_classes,)
+        logits = self.classifier(graph_embedding)
+        
+        return logits
